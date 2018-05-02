@@ -14,9 +14,10 @@ pub mod p2p {
         }
     }
 
+    use std::io;
+    use std::net;
     use byteorder::{ByteOrder, LittleEndian};
     use bytes::{BufMut, BytesMut};
-    use std::io;
     use tokio_io::codec::{Decoder, Encoder};
     use serde_json as json;
 
@@ -36,8 +37,49 @@ pub mod p2p {
         consensus: bool,
     }
 
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct VersionAck {
+        consensus: bool
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct Ping {
+        height: u32
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct Pong {
+        height: u32
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct Transaction {
+        //todo
+        txn: u32
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct NodeInfo {
+        time: i64,
+        services: u64,
+        ip: net::IpAddr,
+        port: u16,
+        cons_port:u16,
+        id: u64,
+    }
+
+    #[derive(Serialize, Deserialize, Debug)]
+    pub struct NodesInfo {
+        nodes : Vec<NodeInfo>
+    }
+
     pub enum Message {
         Version(Version),
+        VersionAck(VersionAck),
+        Ping(Ping),
+        Pong(Pong),
+        Transaction(Transaction),
+        GetNodes,
+        NodesInfo(NodesInfo),
     }
 
     const MSG_CMD_LEN: usize = 12;
@@ -101,13 +143,14 @@ pub mod p2p {
             }
 
             match &hdr.cmd {
-                b"version\0\0\0\0\0" => {
-                    Ok(Some(Message::Version(json::from_slice::<Version>(&payload)?)))
-                }
-                _ => {
-                    Ok(None)
-                }
-
+                b"version\0\0\0\0\0" => Ok(Some(Message::Version(json::from_slice(&payload)?))),
+                b"verack\0\0\0\0\0\0" => Ok(Some(Message::VersionAck(json::from_slice(&payload)?))),
+                b"ping\0\0\0\0\0\0\0\0" => Ok(Some(Message::Ping(json::from_slice(&payload)?))),
+                b"pong\0\0\0\0\0\0\0\0" => Ok(Some(Message::Pong(json::from_slice(&payload)?))),
+                b"getaddr\0\0\0\0\0" => Ok(Some(Message::GetNodes)),
+                b"addr\0\0\0\0\0\0\0\0" => Ok(Some(Message::NodesInfo(json::from_slice(&payload)?))),
+                b"tx\0\0\0\0\0\0\0\0\0\0" => Ok(Some(Message::Transaction(json::from_slice(&payload)?))),
+                _ => Ok(None),
             }
 
         }
@@ -121,6 +164,29 @@ pub mod p2p {
                 Message::Version(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"version\0\0\0\0\0", msg)
+                },
+                Message::VersionAck(payload) => {
+                    let msg = json::to_string(&payload).unwrap();
+                    (b"verack\0\0\0\0\0\0", msg)
+                },
+                Message::Ping(payload) => {
+                    let msg = json::to_string(&payload).unwrap();
+                    (b"ping\0\0\0\0\0\0\0\0", msg)
+                },
+                Message::Pong(payload) =>  {
+                    let msg = json::to_string(&payload).unwrap();
+                    (b"pong\0\0\0\0\0\0\0\0", msg)
+                },
+                Message::GetNodes => {
+                    (b"getaddr\0\0\0\0\0", "".into())
+                },
+                Message::NodesInfo(payload) => {
+                    let msg = json::to_string(&payload).unwrap();
+                    (b"addr\0\0\0\0\0\0\0\0", msg)
+                },
+                Message::Transaction(payload) => {
+                    let msg = json::to_string(&payload).unwrap();
+                    (b"tx\0\0\0\0\0\0\0\0\0\0", msg)
                 }
             };
 
