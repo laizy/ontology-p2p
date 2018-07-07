@@ -6,70 +6,70 @@ extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 
+pub mod crypto;
+pub mod primitives;
 
 pub mod p2p {
-    pub mod utils {
-        pub fn checksum(data: &[u8]) -> [u8;4] {
-            return [0,0,0,0]
-        }
-    }
 
-    use std::io;
-    use std::net;
     use byteorder::{ByteOrder, LittleEndian};
     use bytes::{BufMut, BytesMut};
-    use tokio_io::codec::{Decoder, Encoder};
     use serde_json as json;
+    use std::io;
+    use std::net;
+    use tokio_io::codec::{Decoder, Encoder};
+
+    use super::crypto;
+    use super::primitives::hash::H32;
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Version {
-        version: u32,
-        services: u64,
-        timestamp: u32,
-        sync_port: u16,
-        info_port: u16,
-        cons_port: u16,
-        cap: [u8; 32],
-        nonce: u64,
-        useragent: u8,
-        start_height: u64,
-        relay: u8,
-        consensus: bool,
+        pub version: u32,
+        pub services: u64,
+        pub timestamp: u32,
+        pub sync_port: u16,
+        pub info_port: u16,
+        pub cons_port: u16,
+        pub cap: [u8; 32],
+        pub nonce: u64,
+        pub useragent: u8,
+        pub start_height: u64,
+        pub relay: u8,
+        pub consensus: bool,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct VersionAck {
-        consensus: bool
+        pub consensus: bool,
     }
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Ping {
-        height: u32
+        pub height: u32,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Pong {
-        height: u32
+        pub height: u32,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct Transaction {
         //todo
-        txn: u32
+        pub txn: u32,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     struct NodeInfo {
-        time: i64,
-        services: u64,
-        ip: net::IpAddr,
-        port: u16,
-        cons_port:u16,
-        id: u64,
+        pub time: i64,
+        pub services: u64,
+        pub ip: net::IpAddr,
+        pub port: u16,
+        pub cons_port: u16,
+        pub id: u64,
     }
 
     #[derive(Serialize, Deserialize, Debug)]
     pub struct NodesInfo {
-        nodes : Vec<NodeInfo>
+        pub nodes: Vec<NodeInfo>,
     }
 
     pub enum Message {
@@ -85,18 +85,18 @@ pub mod p2p {
     const MSG_CMD_LEN: usize = 12;
     const MSG_CMD_OFFSET: usize = 4;
     const MSG_LEN_OFFSET: usize = 4 + MSG_CMD_LEN;
-    const MSG_CHECKSUM_OFFSET : usize = MSG_HEADER_LEN - MSG_CHECKSUM_LEN;
+    const MSG_CHECKSUM_OFFSET: usize = MSG_HEADER_LEN - MSG_CHECKSUM_LEN;
     const MSG_CHECKSUM_LEN: usize = 4;
     const MSG_HEADER_LEN: usize = 24;
     const MSG_NET_MAGIC: u32 = 0x74746E41;
 
-//    const MSG_MAX_SIZE :usize = 20*1024*1024;
+    //    const MSG_MAX_SIZE :usize = 20*1024*1024;
 
     struct MsgHeader {
         magic: u32,
         cmd: [u8; MSG_CMD_LEN],
         length: usize, // save as u32
-        checksum: [u8; MSG_CHECKSUM_LEN],
+        checksum: H32,
     }
 
     impl MsgHeader {
@@ -105,10 +105,10 @@ pub mod p2p {
 
             let magic = LittleEndian::read_u32(hdr);
             let mut cmd = [0; MSG_CMD_LEN];
-            cmd.copy_from_slice(&hdr[MSG_CMD_OFFSET..MSG_LEN_OFFSET+MSG_CMD_LEN]);
-            let length = LittleEndian::read_u32(&hdr[MSG_LEN_OFFSET..MSG_LEN_OFFSET+ 4]) as usize;
-            let mut checksum = [0; MSG_CHECKSUM_LEN];
-            checksum.copy_from_slice(&hdr[MSG_CHECKSUM_OFFSET..MSG_CHECKSUM_OFFSET+MSG_CHECKSUM_LEN]);
+            cmd.copy_from_slice(&hdr[MSG_CMD_OFFSET..MSG_LEN_OFFSET + MSG_CMD_LEN]);
+            let length = LittleEndian::read_u32(&hdr[MSG_LEN_OFFSET..MSG_LEN_OFFSET + 4]) as usize;
+            let checksum =
+                H32::from_slice(&hdr[MSG_CHECKSUM_OFFSET..MSG_CHECKSUM_OFFSET + MSG_CHECKSUM_LEN]);
 
             MsgHeader {
                 magic,
@@ -137,7 +137,7 @@ pub mod p2p {
             }
 
             let payload = src.split_to(hdr.length + MSG_HEADER_LEN);
-            let checksum = utils::checksum(&payload);
+            let checksum = crypto::checksum(&payload);
             if hdr.magic != MSG_NET_MAGIC || checksum != hdr.checksum {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "wrong checksum"));
             }
@@ -148,11 +148,14 @@ pub mod p2p {
                 b"ping\0\0\0\0\0\0\0\0" => Ok(Some(Message::Ping(json::from_slice(&payload)?))),
                 b"pong\0\0\0\0\0\0\0\0" => Ok(Some(Message::Pong(json::from_slice(&payload)?))),
                 b"getaddr\0\0\0\0\0" => Ok(Some(Message::GetNodes)),
-                b"addr\0\0\0\0\0\0\0\0" => Ok(Some(Message::NodesInfo(json::from_slice(&payload)?))),
-                b"tx\0\0\0\0\0\0\0\0\0\0" => Ok(Some(Message::Transaction(json::from_slice(&payload)?))),
+                b"addr\0\0\0\0\0\0\0\0" => {
+                    Ok(Some(Message::NodesInfo(json::from_slice(&payload)?)))
+                }
+                b"tx\0\0\0\0\0\0\0\0\0\0" => {
+                    Ok(Some(Message::Transaction(json::from_slice(&payload)?)))
+                }
                 _ => Ok(None),
             }
-
         }
     }
     impl Encoder for MessageCodec {
@@ -164,36 +167,34 @@ pub mod p2p {
                 Message::Version(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"version\0\0\0\0\0", msg)
-                },
+                }
                 Message::VersionAck(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"verack\0\0\0\0\0\0", msg)
-                },
+                }
                 Message::Ping(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"ping\0\0\0\0\0\0\0\0", msg)
-                },
-                Message::Pong(payload) =>  {
+                }
+                Message::Pong(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"pong\0\0\0\0\0\0\0\0", msg)
-                },
-                Message::GetNodes => {
-                    (b"getaddr\0\0\0\0\0", "".into())
-                },
+                }
+                Message::GetNodes => (b"getaddr\0\0\0\0\0", "".into()),
                 Message::NodesInfo(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"addr\0\0\0\0\0\0\0\0", msg)
-                },
+                }
                 Message::Transaction(payload) => {
                     let msg = json::to_string(&payload).unwrap();
                     (b"tx\0\0\0\0\0\0\0\0\0\0", msg)
                 }
             };
 
-            let payload:&[u8] = payload.as_ref();
+            let payload: &[u8] = payload.as_ref();
 
             let length = payload.len();
-            let checksum = utils::checksum(payload.as_ref());
+            let checksum = crypto::checksum(payload);
 
             dst.reserve(length + MSG_HEADER_LEN);
             dst.put_u32_le(MSG_NET_MAGIC);
@@ -204,11 +205,9 @@ pub mod p2p {
 
             Ok(())
         }
-
     }
 
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -217,4 +216,3 @@ mod tests {
         assert_eq!(2 + 2, 4);
     }
 }
-
